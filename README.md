@@ -1,40 +1,146 @@
-# Links
+# Pixel Watch: «Loading…» во время тренировки на русском языке
 
-* [reddit set en only for sys UI](https://www.reddit.com/r/PixelWatch/comments/1woukvw/pixel_watch_5_loading_screen_during_workout/?solution=225eedc5bda71677225eedc5bda71677&js_challenge=1&jsc_token=2824be10929bdc604753c70a67a1c3313c7d963f041b989e7e07b0abc3c34410&jsc_orig_r=&hl=ru-RU)
-* [discussion](https://4pda.to/forum/index.php?showtopic=1123993#entry145000337)
+Обходное решение для бага Wear OS на Pixel Watch: если язык часов русский, во время
+тренировки экран зависает на «Loading…» («Загрузка…»).
 
-# HOWTO
+*English summary: on Pixel Watch with the Russian UI language, Wear SystemUI crash-loops
+while showing the workout live update, because the Russian translation of an accessibility
+string contains unescaped double quotes. Forcing `en-US` for SystemUI only works around it.
+This repo contains an adb script and a tiny Wear OS app that re-applies the override after
+every reboot.*
 
-```bash
-adb pair IP_PAIR:PORT_PAIR CODE
-# should be successfull
+## Проблема
 
-# connect variant (differs from pairing)
-IP=""
-PORT=""
+Во время тренировки (Fitbit Exercise, Strava и другие) часы показывают «живое» уведомление
+о текущей активности. Каждый раз, когда SystemUI (`com.google.android.wearable.sysui`)
+пытается его обновить, он падает и перезапускается — примерно раз в 5 секунд. Между
+перезапусками виден экран «Loading…».
 
-adb connect "$IP:$PORT" CODE
+В `adb logcat`:
 
-adb devices -l
-# List of devices attached
-# 192.168.0.158:35017    offline product:meridian_btwifi model:Pixel_Watch_4 device:meridian_btwifi transport_id:10
-
-# check:
-adb -s "$IP:$PORT" shell dumpsys activity processes com.google.android.wearable.sysui | grep -m1 -o 'Configuration={[^]]*]'
-adb -s "$IP:$PORT"  shell cmd locale get-app-locales com.google.android.wearable.sysui
-# Locales for com.google.android.wearable.sysui for user 0 are [en-US]
-
-./fix-watch-loading.sh
-# detect address
-# Часы не найдены в сети. Включите отладку по Wi-Fi или укажите адрес: ./fix-watch-loading.sh IP:PORT
-# Documents/Health/pixels ❯ adb -s "192.168.0.34:33351" shell cmd locale get-app-locales com.google.android.wearable.sysui                                                 took 5s
-# Documents/Health/pixels ❯ ./fix-watch-loading.sh
-# detect address
-# connecting...
-# wait for device
-# reset locale
-# set locale to en-US
-# Локаль процесса SystemUI: [en_US,ru_RU]
-# OK — можно запускать тренировку
 ```
+KoruException: GLUI: parse_template_literal_string.c:214: Error 22
+Error setting item data: 'aria-expression'
 ```
+
+## Причина
+
+Текст для экранного диктора SystemUI подставляет в выражение как строку в двойных кавычках.
+В русском переводе (`PixelWatchSysUi.apk`) название приложения само взято в кавычки,
+и они не экранированы:
+
+```
+Уведомление из приложения "%1$s": текущее
+```
+
+Строка обрывается на середине, разбор падает. В английском (`%1$s notification: Ongoing`)
+и датском (`%1$s-notifikation: Igangværende`) вариантах кавычек нет, там всё работает.
+Исправить это может только Google.
+
+## Обход
+
+Переключить на `en-US` **только SystemUI**. Язык самих часов и приложений остаётся русским,
+по-английски станут только системные элементы (шторка, уведомления).
+
+Подвох: после перезагрузки часов настройка формально сохраняется
+(`get-app-locales` показывает `[en-US]`), но процесс SystemUI снова поднимается с `ru_RU`.
+Поэтому её нужно применять заново после каждой перезагрузки — скриптом или приложением.
+
+Проверено на Pixel Watch 4 (сборка CP3A.260905.002, SystemUI 7.2.8.14) и Pixel Watch 5,
+Wear OS на Android 17.
+
+## Что нужно
+
+- компьютер с `adb` ([Android platform-tools](https://developer.android.com/tools/releases/platform-tools));
+- на часах режим разработчика и «Отладка по Wi-Fi», часы и компьютер в одной сети.
+
+### Подключение к часам
+
+1. На часах: Настройки → Система → О часах → Версии → 7 раз нажать на «Номер сборки».
+2. Настройки → Для разработчиков → включить «Отладка по ADB» и «Отладка по Wi-Fi».
+3. Пара (один раз): «Отладка по Wi-Fi» → «Подключить новое устройство», затем
+   ```
+   adb pair IP:ПОРТ_ПАРЫ КОД
+   ```
+   Если ответ `protocol fault (couldn't read status message)` — просто повторите команду.
+4. Подключение (порт другой — с основного экрана «Отладка по Wi-Fi», меняется после перезагрузки):
+   ```
+   adb connect IP:ПОРТ
+   adb devices -l
+   ```
+
+## Вариант 1: скрипт
+
+```
+./fix-watch-loading.sh            # сам найдёт часы в сети
+./fix-watch-loading.sh IP:ПОРТ    # или по адресу
+./fix-watch-loading.sh --undo     # снять переопределение
+```
+
+Нужно запускать после каждой перезагрузки часов. Для автопоиска нужен `avahi-browse` (Linux).
+
+## Вариант 2: приложение на часах
+
+`sysui-locale-fix/` — маленькое Wear OS-приложение «SysUI EN»: кнопка «Применить en-US»
+и автоматический запуск примерно через 20 секунд после каждой загрузки. adb нужен только
+один раз — для установки и выдачи разрешения.
+
+Приложение вызывает `LocaleManager.setApplicationLocales()` для SystemUI. Для чужого пакета
+нужно разрешение `android.permission.CHANGE_CONFIGURATION`; обычному приложению оно
+недоступно, но у него уровень `development`, поэтому его можно выдать через `pm grant`.
+
+### Сборка
+
+Без Gradle и Android Studio: нужны JDK 17+, Android SDK `platforms;android-36`
+и `build-tools;36.1.0`.
+
+```
+cd sysui-locale-fix
+./build.sh        # → sysui-locale-fix.apk
+```
+
+Пути можно переопределить через `ANDROID_HOME` и `JAVA_HOME`
+(по умолчанию `~/Android/Sdk` и `~/Android/jdk-21`). При первой сборке создаётся
+`debug.keystore` — сохраните его: обновлять приложение поверх (`install -r`) можно
+только APK с тем же ключом.
+
+### Установка
+
+```
+./install.sh IP:ПОРТ
+```
+
+или вручную:
+
+```
+adb -s IP:ПОРТ install -r sysui-locale-fix.apk
+adb -s IP:ПОРТ shell pm grant dev.sasha.sysuilocale android.permission.CHANGE_CONFIGURATION
+```
+
+После установки **один раз откройте «SysUI EN» на часах** — иначе Android не пришлёт
+приложению событие загрузки. Разрешение сохраняется при перезагрузках и обновлениях,
+но пропадает, если удалить приложение.
+
+## Проверка
+
+```
+adb -s IP:ПОРТ shell dumpsys activity processes com.google.android.wearable.sysui | grep -m1 -o 'Configuration={[^]]*]'
+```
+
+- `[ru_RU]` — баг будет, нужно применить обход;
+- `[en_US,ru_RU]` — всё в порядке.
+
+`cmd locale get-app-locales …` показывает только сохранённую настройку, а не то,
+с чем реально работает процесс, — после перезагрузки они расходятся.
+
+## Откат
+
+```
+./fix-watch-loading.sh --undo
+adb -s IP:ПОРТ uninstall dev.sasha.sysuilocale
+```
+
+## Ссылки
+
+- [Reddit: Pixel Watch 5 loading screen during workout](https://www.reddit.com/r/PixelWatch/comments/1woukvw/pixel_watch_5_loading_screen_during_workout/) — откуда взят обход с `set-app-locales`
+- [Обсуждение на 4PDA](https://4pda.to/forum/index.php?showtopic=1123993#entry145000337)
