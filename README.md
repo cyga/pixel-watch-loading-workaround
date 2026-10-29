@@ -7,7 +7,7 @@
 while showing the workout live update, because the Russian translation of an accessibility
 string contains unescaped double quotes. Forcing `en-US` for SystemUI only works around it.
 This repo contains an adb script and a tiny Wear OS app that re-applies the override after
-every reboot.*
+every reboot and allows user to apply the fix without configuring adb anymore.*
 
 ## Проблема
 
@@ -44,10 +44,10 @@ Error setting item data: 'aria-expression'
 
 Подвох: после перезагрузки часов настройка формально сохраняется
 (`get-app-locales` показывает `[en-US]`), но процесс SystemUI снова поднимается с `ru_RU`.
-Поэтому её нужно применять заново после каждой перезагрузки — скриптом или приложением.
+Иногда это происходит даже без перезагрузки.
+Поэтому её нужно применять заново после каждой перезагрузки или сброса — скриптом или приложением.
 
-Проверено на Pixel Watch 4 (сборка CP3A.260905.002, SystemUI 7.2.8.14) и Pixel Watch 5,
-Wear OS на Android 17.
+Проверено на Pixel Watch 4 (сборка CP3A.260905.002, SystemUI 7.2.8.14) и Pixel Watch 5, Wear OS на Android 17.
 
 ## Что нужно
 
@@ -60,12 +60,12 @@ Wear OS на Android 17.
 2. Настройки → Для разработчиков → включить «Отладка по ADB» и «Отладка по Wi-Fi».
 3. Пара (один раз): «Отладка по Wi-Fi» → «Подключить новое устройство», затем
    ```
-   adb pair IP:ПОРТ_ПАРЫ КОД
+   adb pair IP:PORT_FOR_PAIR КОД
    ```
    Если ответ `protocol fault (couldn't read status message)` — просто повторите команду.
 4. Подключение (порт другой — с основного экрана «Отладка по Wi-Fi», меняется после перезагрузки):
    ```
-   adb connect IP:ПОРТ
+   adb connect IP:PORT
    adb devices -l
    ```
 
@@ -73,7 +73,7 @@ Wear OS на Android 17.
 
 ```
 ./fix-watch-loading.sh            # сам найдёт часы в сети
-./fix-watch-loading.sh IP:ПОРТ    # или по адресу
+./fix-watch-loading.sh IP:PORT    # или по адресу
 ./fix-watch-loading.sh --undo     # снять переопределение
 ```
 
@@ -107,14 +107,14 @@ cd sysui-locale-fix
 ### Установка
 
 ```
-./install.sh IP:ПОРТ
+./install.sh IP:PORT
 ```
 
 или вручную:
 
 ```
-adb -s IP:ПОРТ install -r sysui-locale-fix.apk
-adb -s IP:ПОРТ shell pm grant dev.sasha.sysuilocale android.permission.CHANGE_CONFIGURATION
+adb -s IP:PORT install -r sysui-locale-fix.apk
+adb -s IP:PORT shell pm grant dev.sasha.sysuilocale android.permission.CHANGE_CONFIGURATION
 ```
 
 После установки **один раз откройте «SysUI EN» на часах** — иначе Android не пришлёт
@@ -124,7 +124,7 @@ adb -s IP:ПОРТ shell pm grant dev.sasha.sysuilocale android.permission.CHANG
 ## Проверка
 
 ```
-adb -s IP:ПОРТ shell dumpsys activity processes com.google.android.wearable.sysui | grep -m1 -o 'Configuration={[^]]*]'
+adb -s IP:PORT shell dumpsys activity processes com.google.android.wearable.sysui | grep -m1 -o 'Configuration={[^]]*]'
 ```
 
 - `[ru_RU]` — баг будет, нужно применить обход;
@@ -137,7 +137,7 @@ adb -s IP:ПОРТ shell dumpsys activity processes com.google.android.wearable.
 
 ```
 ./fix-watch-loading.sh --undo
-adb -s IP:ПОРТ uninstall dev.sasha.sysuilocale
+adb -s IP:PORT uninstall dev.sasha.sysuilocale
 ```
 
 ## Ссылки
